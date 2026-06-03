@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,41 @@ def _core_node_state(object_info: dict[str, Any], required_nodes: list[str]) -> 
         name: {"present": name in object_info}
         for name in required_nodes
     }
+
+
+def _safe_input_filename(raw_name: Any) -> str:
+    name = Path(str(raw_name or "input.png")).name
+    safe = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in name)
+    safe = safe.strip("._")
+    return safe or "input.png"
+
+
+def _decode_base64_payload(value: str) -> bytes:
+    payload = value.strip()
+    if payload.startswith("data:"):
+        _, _, payload = payload.partition(",")
+    return base64.b64decode(payload, validate=True)
+
+
+def _write_input_images(job_input: dict[str, Any], comfyui_root: Path) -> list[dict[str, Any]]:
+    raw_images = job_input.get("input_images") or []
+    if not isinstance(raw_images, list):
+        raise ValueError("input_images must be a list when provided.")
+    input_root = comfyui_root / "input"
+    input_root.mkdir(parents=True, exist_ok=True)
+    written: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_images, start=1):
+        if not isinstance(item, dict):
+            raise ValueError("Each input_images item must be an object.")
+        filename = _safe_input_filename(item.get("filename") or f"input_{index}.png")
+        encoded = item.get("data") or item.get("base64")
+        if not isinstance(encoded, str) or not encoded.strip():
+            raise ValueError(f"input_images[{index}] is missing base64 data.")
+        image_bytes = _decode_base64_payload(encoded)
+        path = input_root / filename
+        path.write_bytes(image_bytes)
+        written.append({"filename": filename, "path": str(path), "size_bytes": len(image_bytes)})
+    return written
 
 
 def _build_workflow(job_input: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -99,6 +135,7 @@ def handle_job(
             "comfyui": {"ready": ready, "core_nodes": core_nodes},
         }
 
+    input_images = _write_input_images(job_input, comfyui_root)
     workflow, smoke = _build_workflow(job_input)
     result = client.run_workflow(workflow)
     return {
@@ -110,6 +147,7 @@ def handle_job(
             "smoke": smoke,
             "prompt_id": result.get("prompt_id"),
             "workflow_node_count": len(workflow),
+            "input_images": input_images,
         },
         "diagnostics": {
             "startup_ok": diagnostics["ok"],

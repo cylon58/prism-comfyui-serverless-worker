@@ -56,3 +56,54 @@ def test_handle_job_runs_default_empty_image_smoke_when_workflow_is_omitted(tmp_
     assert result["provenance"]["smoke"] == "empty_image"
     assert result["images"][0]["filename"] == "prism_phase0_smoke_00001_.png"
     assert client.workflow["1"]["class_type"] == "EmptyImage"
+
+
+def test_handle_job_writes_base64_input_images_before_running_workflow(tmp_path):
+    client = FakeComfyClient()
+    comfyui_root = tmp_path / "workspace" / "ComfyUI"
+    workflow = {
+        "1": {"class_type": "LoadImage", "inputs": {"image": "sunny.png"}},
+        "2": {"class_type": "SaveImage", "inputs": {"filename_prefix": "uploaded", "images": ["1", 0]}},
+    }
+
+    result = handle_job(
+        {
+            "id": "job-3",
+            "input": {
+                "workflow": workflow,
+                "input_images": [
+                    {
+                        "filename": "../sunny.png",
+                        "data": "aGVsbG8=",
+                    }
+                ],
+            },
+        },
+        client=client,
+        workspace_root=tmp_path / "workspace",
+        volume_root=tmp_path / "runpod-volume",
+        comfyui_root=comfyui_root,
+    )
+
+    uploaded = result["provenance"]["input_images"][0]
+    assert uploaded["filename"] == "sunny.png"
+    assert uploaded["size_bytes"] == 5
+    assert (comfyui_root / "input" / "sunny.png").read_bytes() == b"hello"
+    assert (tmp_path / "workspace" / "sunny.png").exists() is False
+
+
+def test_handle_job_rejects_invalid_input_images_shape(tmp_path):
+    client = FakeComfyClient()
+
+    try:
+        handle_job(
+            {"id": "job-4", "input": {"smoke": "empty_image", "input_images": "not-a-list"}},
+            client=client,
+            workspace_root=tmp_path / "workspace",
+            volume_root=tmp_path / "runpod-volume",
+            comfyui_root=tmp_path / "workspace" / "ComfyUI",
+        )
+    except ValueError as exc:
+        assert "input_images must be a list" in str(exc)
+    else:
+        raise AssertionError("Expected invalid input_images to raise ValueError.")
