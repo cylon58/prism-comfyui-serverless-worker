@@ -9,6 +9,7 @@ from typing import Any, Iterable
 DEFAULT_WORKSPACE_ROOT = Path("/workspace")
 DEFAULT_VOLUME_ROOT = Path("/runpod-volume")
 DEFAULT_COMFYUI_ROOT = Path(os.environ.get("COMFYUI_PATH", "/workspace/ComfyUI"))
+DEFAULT_COMFYUI_IMAGE_ROOT = Path("/comfyui")
 
 
 def parse_csv_env(name: str) -> list[str]:
@@ -33,6 +34,33 @@ def _file_size(path: Path) -> int | None:
         return path.stat().st_size
     except OSError:
         return None
+
+
+def _directory_listing(path: Path, *, limit: int = 80) -> dict[str, Any]:
+    state = _path_state(path)
+    items: list[dict[str, Any]] = []
+    if state["is_dir"]:
+        try:
+            children = sorted(path.iterdir(), key=lambda child: child.name.lower())
+        except OSError as exc:
+            state["error"] = str(exc)
+            children = []
+        for child in children[:limit]:
+            child_state = _path_state(child)
+            items.append(
+                {
+                    "name": child.name,
+                    "path": str(child),
+                    "is_dir": child_state["is_dir"],
+                    "is_file": child_state["is_file"],
+                    "is_symlink": child_state["is_symlink"],
+                    "broken_symlink": child_state["broken_symlink"],
+                    "size_bytes": _file_size(child) if child_state["is_file"] else None,
+                }
+            )
+    state["items"] = items
+    state["truncated"] = len(items) >= limit
+    return state
 
 
 def _inventory_files(roots: Iterable[Path], *, suffixes: tuple[str, ...], limit: int = 200) -> list[dict[str, Any]]:
@@ -113,9 +141,12 @@ def build_startup_diagnostics(
 ) -> dict[str, Any]:
     model_roots = [
         comfyui_root / "models",
+        DEFAULT_COMFYUI_IMAGE_ROOT / "models",
         workspace_root / "ComfyUI" / "models",
+        workspace_root / "runpod-slim" / "ComfyUI" / "models",
         volume_root / "models",
         volume_root / "ComfyUI" / "models",
+        volume_root / "runpod-slim" / "ComfyUI" / "models",
     ]
     checkpoints = _inventory_files(
         [root / "checkpoints" for root in model_roots] + model_roots,
@@ -145,6 +176,12 @@ def build_startup_diagnostics(
         "mounts": {
             "workspace": _path_state(workspace_root),
             "runpod_volume": _path_state(volume_root),
+        },
+        "directory_listings": {
+            "workspace": _directory_listing(workspace_root),
+            "runpod_volume": _directory_listing(volume_root),
+            "comfyui_root": _directory_listing(comfyui_root),
+            "comfyui_image_root": _directory_listing(DEFAULT_COMFYUI_IMAGE_ROOT),
         },
         "model_roots": [_path_state(root) for root in model_roots],
         "checkpoints": {

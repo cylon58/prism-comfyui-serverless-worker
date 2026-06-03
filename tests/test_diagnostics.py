@@ -77,6 +77,49 @@ def test_startup_diagnostics_validates_required_model_files_by_relative_path(tmp
     assert diagnostics["missing_required_files"] == []
 
 
+def test_startup_diagnostics_checks_runpod_slim_models_on_network_volume(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    volume = tmp_path / "runpod-volume"
+    qwen_encoder = volume / "runpod-slim" / "ComfyUI" / "models" / "text_encoders" / "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+    qwen_encoder.parent.mkdir(parents=True)
+    qwen_encoder.write_bytes(b"model placeholder")
+
+    diagnostics = build_startup_diagnostics(
+        workspace_root=workspace,
+        volume_root=volume,
+        comfyui_root=workspace / "ComfyUI",
+        required_model_files=[
+            "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        ],
+    )
+
+    required = diagnostics["model_files"]["required"]["text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"]
+    assert diagnostics["ok"] is True
+    assert required["present"] is True
+    assert required["path"] == str(qwen_encoder)
+    assert str(volume / "runpod-slim" / "ComfyUI" / "models" / "text_encoders" / qwen_encoder.name) in required["checked_paths"]
+    assert diagnostics["missing_required_files"] == []
+
+
+def test_startup_diagnostics_reports_shallow_directory_listings(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    volume = tmp_path / "runpod-volume"
+    (volume / "runpod-slim").mkdir(parents=True)
+    (volume / "README.txt").write_text("volume marker", encoding="utf-8")
+
+    diagnostics = build_startup_diagnostics(
+        workspace_root=workspace,
+        volume_root=volume,
+        comfyui_root=workspace / "ComfyUI",
+    )
+
+    listing = diagnostics["directory_listings"]["runpod_volume"]
+    names = {item["name"] for item in listing["items"]}
+    assert listing["exists"] is True
+    assert "runpod-slim" in names
+    assert "README.txt" in names
+
+
 def test_startup_diagnostics_reports_missing_and_broken_required_model_files(tmp_path: Path):
     workspace = tmp_path / "workspace"
     volume = tmp_path / "runpod-volume"
