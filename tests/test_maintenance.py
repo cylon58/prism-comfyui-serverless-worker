@@ -4,6 +4,7 @@ from prism_worker.handler_core import handle_job
 from prism_worker.maintenance import (
     DownloadResult,
     ManagedModelFile,
+    cleanup_allowlisted,
     repair_qwen2511,
     run_maintenance,
     volume_report,
@@ -21,6 +22,7 @@ def test_volume_report_includes_qwen_file_state(tmp_path: Path):
     assert report["status"] == "maintenance"
     assert report["action"] == "volume_report"
     assert report["model_root"].endswith("runpod-slim/ComfyUI/models")
+    assert "du" in report
     assert "qwen_image_vae.safetensors" in report["qwen2511"]
     assert report["qwen2511"]["qwen_image_vae.safetensors"]["valid"] is False
 
@@ -91,3 +93,19 @@ def test_run_maintenance_reports_unknown_action(tmp_path: Path):
     result = run_maintenance({"maintenance": "shell"}, volume_root=tmp_path / "runpod-volume")
 
     assert result["error"] == "unknown_maintenance_action"
+
+
+def test_cleanup_allowlisted_removes_only_named_targets(tmp_path: Path):
+    volume = tmp_path / "runpod-volume"
+    part = volume / "runpod-slim" / "ComfyUI" / "models" / "text_encoders" / "qwen_2.5_vl_7b_fp8_scaled.safetensors.part"
+    keep = volume / "runpod-slim" / "ComfyUI" / "models" / "text_encoders" / "keep.safetensors"
+    part.parent.mkdir(parents=True)
+    part.write_bytes(b"partial")
+    keep.write_bytes(b"keep")
+
+    result = cleanup_allowlisted(volume, ["failed_qwen_parts", "not-a-real-target"])
+
+    assert result["status"] == "maintenance_failed"
+    assert part.exists() is False
+    assert keep.exists() is True
+    assert result["refused"] == [{"target": "not-a-real-target", "reason": "not_allowlisted"}]

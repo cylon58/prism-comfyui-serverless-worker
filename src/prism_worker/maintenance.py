@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +60,21 @@ QWEN_2511_MODEL_FILES = [
     ),
 ]
 
+CLEANUP_TARGETS = {
+    "failed_qwen_parts": [
+        MODEL_ROOT_RELATIVE / "text_encoders" / "qwen_2.5_vl_7b_fp8_scaled.safetensors.part",
+        MODEL_ROOT_RELATIVE / "diffusion_models" / "qwen_image_edit_2511_bf16.safetensors.part",
+        MODEL_ROOT_RELATIVE / "vae" / "qwen_image_vae.safetensors.part",
+    ],
+    "sd_scripts_training_env": [
+        Path("venv-sd-scripts"),
+        Path("venv-sd-scripts-active"),
+    ],
+    "sd_scripts_checkout": [
+        Path("sd-scripts"),
+    ],
+}
+
 
 def _disk_usage(path: Path) -> dict[str, Any]:
     usage_path = path
@@ -73,6 +89,31 @@ def _disk_usage(path: Path) -> dict[str, Any]:
         "used_bytes": usage.used,
         "free_bytes": usage.free,
     }
+
+
+def _du_bytes(path: Path, *, timeout_seconds: int = 300) -> dict[str, Any]:
+    if not path.exists() and not path.is_symlink():
+        return {"path": str(path), "exists": False, "bytes": None}
+    try:
+        result = subprocess.run(
+            ["du", "-sb", str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+        size_text = result.stdout.split(maxsplit=1)[0]
+        return {"path": str(path), "exists": True, "bytes": int(size_text)}
+    except Exception as exc:
+        return {"path": str(path), "exists": True, "bytes": None, "error": str(exc)}
+
+
+def _children_du(path: Path, *, limit: int = 80) -> list[dict[str, Any]]:
+    if not path.exists() or not path.is_dir():
+        return []
+    items = [_du_bytes(child) | {"name": child.name} for child in sorted(path.iterdir(), key=lambda item: item.name)]
+    items.sort(key=lambda item: item["bytes"] or 0, reverse=True)
+    return items[:limit]
 
 
 def _model_root(volume_root: Path) -> Path:
@@ -115,11 +156,18 @@ def volume_report(
     volume_root: Path,
     model_files: Iterable[ManagedModelFile] = QWEN_2511_MODEL_FILES,
 ) -> dict[str, Any]:
+    model_root = _model_root(volume_root)
     return {
         "status": "maintenance",
         "action": "volume_report",
         "volume": _disk_usage(volume_root),
-        "model_root": str(_model_root(volume_root)),
+        "du": {
+            "volume_root": _du_bytes(volume_root),
+            "volume_children": _children_du(volume_root),
+            "model_root": _du_bytes(model_root),
+            "model_children": _children_du(model_root),
+        },
+        "model_root": str(model_root),
         "qwen2511": _managed_file_states(volume_root, model_files),
     }
 
@@ -215,7 +263,20 @@ def repair_qwen2511(
             )
             continue
         destination = _model_root(volume_root) / model_file.relative_path
-        result = downloader(model_file.url, destination, model_file.expected_size_bytes)
+        try:
+            result = downloader(model_file.url, destination, model_file.expected_size_bytes)
+        except Exception as exc:
+            return {
+                "status": "maintenance_failed",
+                "action": "qwen2511_repair",
+                "ok": False,
+                "error": type(exc).__name__,
+                "message": str(exc),
+                "failed_relative_path": str(model_file.relative_path),
+                "downloads": downloads,
+                "before": before,
+                "after": volume_report(volume_root, model_files=files),
+            }
         downloads.append(
             {
                 "status": result.status,
@@ -239,6 +300,59 @@ def repair_qwen2511(
     }
 
 
+def cleanup_allowlisted(volume_root: Path, targets: Iterable[str]) -> dict[str, Any]:
+    requested = list(targets)
+    before = volume_report(volume_root)
+    removed: list[dict[str, Any]] = []
+    refused: list[dict[str, Any]] = []
+    for target in requested:
+        relative_paths = CLEANUP_TARGETS.get(target)
+        if not relative_paths:
+            refused.append({"target": target, "reason": "not_allowlisted"})
+            continue
+        for relative_path in relative_paths:
+            path = volume_root / relative_path
+            state_before = _du_bytes(path)
+            if not path.exists() and not path.is_symlink():
+                removed.append({"target": target, "path": str(path), "status": "already_absent"})
+                continue
+            try:
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            except Exception as exc:
+                removed.append(
+                    {
+                        "target": target,
+                        "path": str(path),
+                        "status": "failed",
+                        "error": type(exc).__name__,
+                        "message": str(exc),
+                        "bytes_before": state_before.get("bytes"),
+                    }
+                )
+                continue
+            removed.append(
+                {
+                    "target": target,
+                    "path": str(path),
+                    "status": "removed",
+                    "bytes_before": state_before.get("bytes"),
+                }
+            )
+    after = volume_report(volume_root)
+    return {
+        "status": "maintenance_completed" if not refused else "maintenance_failed",
+        "action": "cleanup_allowlisted",
+        "requested": requested,
+        "removed": removed,
+        "refused": refused,
+        "before": before,
+        "after": after,
+    }
+
+
 def run_maintenance(
     job_input: dict[str, Any],
     *,
@@ -255,4 +369,9 @@ def run_maintenance(
             downloader=downloader,
             enforce_space_check=enforce_space_check,
         )
+    if action == "cleanup_allowlisted":
+        targets = job_input.get("targets") or []
+        if not isinstance(targets, list):
+            return {"error": "invalid_cleanup_targets", "message": "targets must be a list."}
+        return cleanup_allowlisted(volume_root, [str(target) for target in targets])
     return {"error": "unknown_maintenance_action", "action": action}
