@@ -43,6 +43,13 @@ class ComfyClient:
         response.raise_for_status()
         return response.json()
 
+    def models(self, folder: str) -> Any:
+        import requests
+
+        response = requests.get(f"{self.base_url}/models/{folder}", timeout=30)
+        response.raise_for_status()
+        return response.json()
+
     def queue_workflow(self, workflow: dict[str, Any]) -> str:
         import requests
 

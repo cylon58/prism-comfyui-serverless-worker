@@ -12,6 +12,15 @@ from prism_worker.workflows import build_empty_image_smoke_workflow
 
 
 DEFAULT_REQUIRED_CORE_NODES = ["EmptyImage", "SaveImage"]
+DEFAULT_INTROSPECT_NODES = [
+    "LoadImage",
+    "SaveImage",
+    "UNETLoader",
+    "CLIPLoader",
+    "VAELoader",
+    "ModelSamplingAuraFlow",
+]
+DEFAULT_INTROSPECT_MODEL_FOLDERS = ["diffusion_models", "text_encoders", "vae", "loras", "checkpoints"]
 
 
 def _required_core_nodes() -> list[str]:
@@ -23,6 +32,44 @@ def _core_node_state(object_info: dict[str, Any], required_nodes: list[str]) -> 
         name: {"present": name in object_info}
         for name in required_nodes
     }
+
+
+def _strings_from(value: Any, default: list[str]) -> list[str]:
+    if value is None or value is True:
+        return list(default)
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return list(default)
+
+
+def _introspection_request(job_input: dict[str, Any]) -> tuple[list[str], list[str]]:
+    raw = job_input.get("introspect")
+    if isinstance(raw, dict):
+        return (
+            _strings_from(raw.get("nodes"), DEFAULT_INTROSPECT_NODES),
+            _strings_from(raw.get("model_folders"), DEFAULT_INTROSPECT_MODEL_FOLDERS),
+        )
+    return (
+        _strings_from(job_input.get("introspect_nodes"), DEFAULT_INTROSPECT_NODES),
+        _strings_from(job_input.get("introspect_model_folders"), DEFAULT_INTROSPECT_MODEL_FOLDERS),
+    )
+
+
+def _model_folder_state(client: Any, folders: list[str]) -> dict[str, Any]:
+    models: dict[str, Any] = {}
+    for folder in folders:
+        try:
+            items = client.models(folder)
+        except Exception as exc:  # pragma: no cover - exercised against live ComfyUI.
+            models[folder] = {"ok": False, "error": str(exc)}
+            continue
+        if isinstance(items, list):
+            models[folder] = {"ok": True, "count": len(items), "items": items}
+        else:
+            models[folder] = {"ok": True, "type": type(items).__name__, "items": items}
+    return models
 
 
 def _safe_input_filename(raw_name: Any) -> str:
@@ -126,6 +173,28 @@ def handle_job(
     object_info = client.object_info()
     required_core_nodes = _required_core_nodes()
     core_nodes = _core_node_state(object_info, required_core_nodes)
+    if job_input.get("introspect"):
+        nodes, model_folders = _introspection_request(job_input)
+        selected_object_info = {
+            name: object_info[name]
+            for name in nodes
+            if name in object_info
+        }
+        return {
+            "status": "introspection",
+            "diagnostics": diagnostics,
+            "comfyui": {
+                "ready": ready,
+                "core_nodes": core_nodes,
+            },
+            "object_info": {
+                "available_node_count": len(object_info),
+                "selected": selected_object_info,
+                "missing_nodes": [name for name in nodes if name not in object_info],
+            },
+            "models": _model_folder_state(client, model_folders),
+        }
+
     missing_core_nodes = [name for name, state in core_nodes.items() if not state["present"]]
     if missing_core_nodes:
         return {
