@@ -73,6 +73,25 @@ CLEANUP_TARGETS = {
     "sd_scripts_checkout": [
         Path("sd-scripts"),
     ],
+    "prism_training_artifacts": [
+        Path("prism-training"),
+    ],
+    "legacy_failed_identity_adapters": [
+        MODEL_ROOT_RELATIVE / "clip_vision",
+        MODEL_ROOT_RELATIVE / "controlnet",
+        MODEL_ROOT_RELATIVE / "instantid",
+        MODEL_ROOT_RELATIVE / "insightface",
+        MODEL_ROOT_RELATIVE / "ipadapter",
+        MODEL_ROOT_RELATIVE / "photomaker",
+        MODEL_ROOT_RELATIVE / "pulid",
+    ],
+    "flux2_bfs_stack": [
+        MODEL_ROOT_RELATIVE / "diffusion_models" / "flux-2-klein-4b-fp8.safetensors",
+        MODEL_ROOT_RELATIVE / "diffusion_models" / "flux-2-klein-9b-fp8.safetensors",
+        MODEL_ROOT_RELATIVE / "loras" / "flux2",
+        MODEL_ROOT_RELATIVE / "text_encoders" / "qwen_3_8b_fp8mixed.safetensors",
+        MODEL_ROOT_RELATIVE / "vae" / "flux2-vae.safetensors",
+    ],
 }
 
 
