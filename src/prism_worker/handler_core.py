@@ -6,6 +6,7 @@ from typing import Any
 
 from prism_worker.comfy_client import ComfyClient
 from prism_worker.diagnostics import build_startup_diagnostics, parse_csv_env
+from prism_worker.maintenance import run_maintenance
 from prism_worker.workflows import build_empty_image_smoke_workflow
 
 
@@ -49,6 +50,13 @@ def handle_job(
     job_input = job.get("input") or {}
     if isinstance(job_input, str):
         raise ValueError("String input is not supported for the Prism worker; send JSON input.")
+    if job_input.get("maintenance"):
+        if os.environ.get("PRISM_ALLOW_MAINTENANCE", "false").lower() != "true":
+            return {
+                "error": "maintenance_not_allowed",
+                "message": "Set PRISM_ALLOW_MAINTENANCE=true on a purpose-built maintenance template.",
+            }
+        return run_maintenance(job_input, volume_root=volume_root)
     client = client or ComfyClient(
         base_url=os.environ.get("COMFYUI_BASE_URL", "http://127.0.0.1:8188"),
         ready_timeout_seconds=float(os.environ.get("PRISM_COMFY_READY_TIMEOUT_SECONDS", "180")),
