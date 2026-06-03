@@ -72,6 +72,13 @@ def _model_folder_state(client: Any, folders: list[str]) -> dict[str, Any]:
     return models
 
 
+def _system_stats_state(client: Any) -> dict[str, Any]:
+    try:
+        return {"ok": True, "value": client.system_stats()}
+    except Exception as exc:  # pragma: no cover - exercised against live ComfyUI.
+        return {"ok": False, "error": str(exc)}
+
+
 def _safe_input_filename(raw_name: Any) -> str:
     name = Path(str(raw_name or "input.png")).name
     safe = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in name)
@@ -193,6 +200,7 @@ def handle_job(
                 "missing_nodes": [name for name in nodes if name not in object_info],
             },
             "models": _model_folder_state(client, model_folders),
+            "system_stats": _system_stats_state(client),
         }
 
     missing_core_nodes = [name for name, state in core_nodes.items() if not state["present"]]

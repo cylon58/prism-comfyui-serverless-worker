@@ -17,6 +17,9 @@ class FakeComfyClient:
             "CLIPLoader": {"input": {"required": {"clip_name": [["qwen_2.5_vl_7b_fp8_scaled.safetensors"]]}}},
         }
 
+    def system_stats(self):
+        return {"devices": [{"name": "NVIDIA Test GPU", "total_memory": 48_000_000_000}]}
+
     def models(self, folder):
         self.model_folders.append(folder)
         return {
@@ -147,5 +150,6 @@ def test_handle_job_introspects_live_nodes_and_models_without_running_workflow(t
     assert "UNETLoader" in result["object_info"]["selected"]
     assert result["object_info"]["missing_nodes"] == ["MissingNode"]
     assert result["models"]["diffusion_models"]["items"] == ["qwen_image_edit_2511_bf16.safetensors"]
+    assert result["system_stats"]["value"]["devices"][0]["name"] == "NVIDIA Test GPU"
     assert client.model_folders == ["diffusion_models", "text_encoders", "vae"]
     assert client.workflow is None

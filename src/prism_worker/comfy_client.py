@@ -43,6 +43,13 @@ class ComfyClient:
         response.raise_for_status()
         return response.json()
 
+    def system_stats(self) -> dict[str, Any]:
+        import requests
+
+        response = requests.get(f"{self.base_url}/system_stats", timeout=30)
+        response.raise_for_status()
+        return response.json()
+
     def models(self, folder: str) -> Any:
         import requests
 
