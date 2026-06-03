@@ -9,6 +9,7 @@ from prism_worker.handler_core import handle_job
 
 startup_diagnostics = build_startup_diagnostics(
     required_checkpoints=parse_csv_env("PRISM_REQUIRED_CHECKPOINTS"),
+    required_model_files=parse_csv_env("PRISM_REQUIRED_MODEL_FILES"),
     required_custom_nodes=parse_csv_env("PRISM_REQUIRED_CUSTOM_NODES"),
 )
 print("PRISM_STARTUP_DIAGNOSTICS_JSON=" + json.dumps(startup_diagnostics, sort_keys=True))

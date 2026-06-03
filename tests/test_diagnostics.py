@@ -49,3 +49,59 @@ def test_startup_diagnostics_fails_fast_when_required_assets_are_missing(tmp_pat
         "kind": "custom_node",
         "name": "ComfyUI-MissingNode",
     } in diagnostics["missing_required_files"]
+
+
+def test_startup_diagnostics_validates_required_model_files_by_relative_path(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    volume = tmp_path / "runpod-volume"
+    qwen_encoder = volume / "models" / "text_encoders" / "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+    qwen_diffusion = volume / "models" / "diffusion_models" / "qwen_image_edit_2511_bf16.safetensors"
+    qwen_vae = volume / "models" / "vae" / "qwen_image_vae.safetensors"
+    for path in (qwen_encoder, qwen_diffusion, qwen_vae):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"model placeholder")
+
+    diagnostics = build_startup_diagnostics(
+        workspace_root=workspace,
+        volume_root=volume,
+        comfyui_root=workspace / "ComfyUI",
+        required_model_files=[
+            "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+            "diffusion_models/qwen_image_edit_2511_bf16.safetensors",
+            "vae/qwen_image_vae.safetensors",
+        ],
+    )
+
+    assert diagnostics["ok"] is True
+    assert diagnostics["model_files"]["required"]["diffusion_models/qwen_image_edit_2511_bf16.safetensors"]["present"] is True
+    assert diagnostics["missing_required_files"] == []
+
+
+def test_startup_diagnostics_reports_missing_and_broken_required_model_files(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    volume = tmp_path / "runpod-volume"
+    broken = volume / "models" / "diffusion_models" / "qwen_image_edit_2511_bf16.safetensors"
+    broken.parent.mkdir(parents=True, exist_ok=True)
+    broken.symlink_to(tmp_path / "missing-target.safetensors")
+
+    diagnostics = build_startup_diagnostics(
+        workspace_root=workspace,
+        volume_root=volume,
+        comfyui_root=workspace / "ComfyUI",
+        required_model_files=[
+            "diffusion_models/qwen_image_edit_2511_bf16.safetensors",
+            "vae/qwen_image_vae.safetensors",
+        ],
+    )
+
+    assert diagnostics["ok"] is False
+    assert diagnostics["model_files"]["required"]["diffusion_models/qwen_image_edit_2511_bf16.safetensors"]["present"] is False
+    assert diagnostics["model_files"]["required"]["diffusion_models/qwen_image_edit_2511_bf16.safetensors"]["broken_symlink"] is True
+    assert {
+        "kind": "model_file",
+        "name": "diffusion_models/qwen_image_edit_2511_bf16.safetensors",
+    } in diagnostics["missing_required_files"]
+    assert {
+        "kind": "model_file",
+        "name": "vae/qwen_image_vae.safetensors",
+    } in diagnostics["missing_required_files"]

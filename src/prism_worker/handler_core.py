@@ -60,6 +60,7 @@ def handle_job(
         volume_root=volume_root,
         comfyui_root=comfyui_root,
         required_checkpoints=parse_csv_env("PRISM_REQUIRED_CHECKPOINTS"),
+        required_model_files=parse_csv_env("PRISM_REQUIRED_MODEL_FILES"),
         required_custom_nodes=parse_csv_env("PRISM_REQUIRED_CUSTOM_NODES"),
     )
     if job_input.get("diagnostics"):
